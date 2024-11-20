@@ -1,0 +1,545 @@
+---
+title: "FDA_JComp"
+author: "Tanvi"
+date: "2024-09-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("mongolite")
+```
+
+```{r}
+library(mongolite)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(tidyverse)
+library(caret)  
+```
+
+```{r}
+cs = 'mongodb://localhost:27017/'
+traind = mongo(collection="traindissym",db="ArogyaDB",url=cs)
+testd = mongo(collection="testdissym",db="ArogyaDB",url=cs)
+```
+
+```{r}
+train_data = traind$find()
+```
+
+```{r}
+test_data = testd$find()
+```
+
+```{r}
+head(train_data)
+```
+```{r}
+head(test_data)
+```
+
+
+```{r}
+summary(train_data)
+```
+
+```{r}
+summary(train_data)
+```
+
+```{r}
+sum(is.na(train_data))
+```
+
+```{r}
+corr = cor(train_data[,1:180])
+```
+
+```{r}
+# Load necessary libraries
+library(caret)
+
+# Select relevant columns from the training data
+seld = train_data[, 1:180]
+
+# Remove constant columns (standard deviation is 0)
+consc = sapply(seld, function(x) sd(x) == 0)
+seld = seld[, !consc]
+
+# Calculate the correlation matrix
+corm = cor(seld)
+
+# Set the threshold for high correlation
+threshold <- 0.8
+
+# Find indices of features to remove due to high correlation
+highc = findCorrelation(corm, cutoff = threshold)
+
+# Create a vector to store features to keep
+features_to_keep <- NULL
+
+# Loop through all features and select one from each correlated pair
+for (i in seq_along(highc)) {
+    if (!(highc[i] %in% features_to_keep)) {
+        features_to_keep <- c(features_to_keep, highc[i])
+    }
+}
+
+# Remove only one feature from each correlated group
+redd <- seld[, -features_to_keep]
+
+# Combine with prognosis column from the original dataset
+reddata = cbind(redd, prognosis = train_data$prognosis)
+
+# Write the reduced dataset to a CSV file
+write.csv(reddata, 'red_dataset.csv', row.names = FALSE)
+```
+
+```{r}
+# Load necessary libraries
+library(caret)
+
+# Select relevant columns from the test data (matching the training data structure)
+seld_test <- test_data[, 1:180]
+
+# Remove constant columns (standard deviation is 0), matching columns removed in training
+consc_test <- sapply(seld_test, function(x) sd(x) == 0)
+seld_test <- seld_test[, !consc]
+
+# Use the correlation matrix from training data (already stored in highc from the previous code)
+# Remove only one feature from each correlated group, matching columns removed in training
+redd_test <- seld_test[, -features_to_keep]
+
+# Combine with prognosis column from the original test dataset
+reddata_test <- cbind(redd_test, prognosis = test_data$prognosis)
+
+# Write the reduced test dataset to a CSV file
+write.csv(reddata_test, 'red_test_dataset.csv', row.names = FALSE)
+```
+
+```{r}
+# Load necessary libraries
+library(caret)
+
+# Select relevant columns from the training data
+seld_train <- train_data[, 1:180]
+
+# Remove constant columns in the training data
+consc_train <- sapply(seld_train, function(x) sd(x) == 0)
+seld_train <- seld_train[, !consc_train]
+
+# Calculate correlation matrix on the filtered training data
+corm_train <- cor(seld_train)
+
+# Set the threshold for high correlation
+threshold <- 0.8
+
+# Find indices of features to remove due to high correlation
+high_corr_features <- findCorrelation(corm_train, cutoff = threshold)
+features_to_keep <- colnames(seld_train)[-high_corr_features]
+
+# Filter the training data to keep only selected features
+redd_train <- seld_train[, features_to_keep]
+reddata_train <- cbind(redd_train, prognosis = train_data$prognosis)
+
+# Apply the same feature selection to the test data
+seld_test <- test_data[, features_to_keep, drop = FALSE]
+reddata_test <- cbind(seld_test, prognosis = test_data$prognosis)
+
+# Write reduced datasets to CSV files
+write.csv(reddata_train, 'red_train_dataset.csv', row.names = FALSE)
+write.csv(reddata_test, 'red_test_dataset.csv', row.names = FALSE)
+```
+
+
+
+```{r}
+train_df = read.csv("red_train_dataset.csv")
+train_df
+```
+
+```{r}
+test_df = read.csv("red_test_dataset.csv")
+test_df
+```
+
+
+```{r}
+dis = unique(train_df$prognosis)
+dis
+```
+
+```{r}
+sym = colnames(unique(train_df[,1:129]))
+sym
+```
+
+```{r}
+library(e1071) 
+library(dplyr)
+library(rpart)        # For decision tree
+library(rpart.plot)   # For plotting the decision tree
+library(caret)        # For model evaluation
+
+```
+
+```{r}
+# Define symptom names based on the training dataset
+symptom_names <- colnames(train_df)[-ncol(train_df)] # Exclude prognosis column
+
+# Function to get user input for symptoms
+get_user_symptoms <- function(symptom_names) {
+    symptoms <- rep(0, length(symptom_names)) # Initialize a vector of zeros
+    cat("Enter symptoms (separate multiple symptoms with commas):\n")
+    input <- readline(prompt = "Symptoms: ")
+    
+    # Split input into individual symptom names
+    user_inputs <- unlist(strsplit(input, ","))
+    user_inputs <- trimws(user_inputs) # Remove whitespace
+    
+    for (symptom in user_inputs) {
+        if (symptom %in% symptom_names) {
+            index <- which(symptom_names == symptom)
+            symptoms[index] <- 1 # Set to 1 if symptom is present
+        } else {
+            cat(paste("Warning: '", symptom, "' is not a valid symptom name.\n", sep = ""))
+        }
+    }
+    
+    return(symptoms)
+}
+
+# Train the Naive Bayes model
+model <- naiveBayes(prognosis ~ ., data = train_df)
+
+# Get user input for symptoms
+user_symptoms <- get_user_symptoms(symptom_names)
+
+# Convert to data frame and set column names
+user_data <- as.data.frame(t(user_symptoms)) # Transpose to match model input
+colnames(user_data) <- symptom_names # Set column names
+
+# Predict probabilities using the trained model
+predictions_probabilities <- predict(model, user_data, type = "raw")
+
+# Print all possible diseases with their probabilities
+cat("Possible Diseases based on your symptoms:\n")
+
+# Sort predictions by probability and get top 5 diseases
+top_diseases_indices <- order(predictions_probabilities[1, ], decreasing = TRUE)[1:5]
+top_diseases <- predictions_probabilities[1, top_diseases_indices]
+top_disease_names <- colnames(predictions_probabilities)[top_diseases_indices]
+
+for (i in seq_along(top_disease_names)) {
+    cat(paste(top_disease_names[i], ":", round(top_diseases[i], 4), "\n"))
+}
+
+# Evaluate model accuracy using test data
+y_pred_test <- predict(model, test_df[, -ncol(test_df)]) # Exclude prognosis column from test data
+accuracy <- sum(y_pred_test == test_df$prognosis) / nrow(test_df)
+
+cat(paste("\nModel Accuracy:", round(accuracy, 4), "\n"))
+```
+
+```{r}
+# Define symptom names based on the training dataset
+symptom_names <- colnames(train_df)[-ncol(train_df)] # Exclude prognosis column
+
+# Function to get user input for symptoms
+get_user_symptoms <- function(symptom_names) {
+    symptoms <- rep(0, length(symptom_names)) # Initialize a vector of zeros
+    cat("Enter symptoms (separate multiple symptoms with commas):\n")
+    input <- readline(prompt = "Symptoms: ")
+    
+    # Split input into individual symptom names
+    user_inputs <- unlist(strsplit(input, ","))
+    user_inputs <- trimws(user_inputs) # Remove whitespace
+    
+    for (symptom in user_inputs) {
+        if (symptom %in% symptom_names) {
+            index <- which(symptom_names == symptom)
+            symptoms[index] <- 1 # Set to 1 if symptom is present
+        } else {
+            cat(paste("Warning: '", symptom, "' is not a valid symptom name.\n", sep = ""))
+        }
+    }
+    
+    return(symptoms)
+}
+
+# Train the Decision Tree model
+model <- rpart(prognosis ~ ., data = train_df, method = "class")
+
+# Get user input for symptoms
+user_symptoms <- get_user_symptoms(symptom_names)
+
+# Function to count occurrences of diseases based on user symptoms in training data
+count_occurrences <- function(user_symptoms) {
+    # Create a mask to filter rows where all user symptoms are 1
+    symptom_mask <- rowSums(train_df[, -ncol(train_df)] * as.numeric(user_symptoms)) == sum(user_symptoms)
+    
+    # Initialize a table to store count of occurrences per disease
+    disease_counts <- table(train_df[symptom_mask, ncol(train_df)])
+    
+    return(disease_counts)
+}
+
+# Count occurrences of predicted diseases based on user symptoms
+disease_counts <- count_occurrences(user_symptoms)
+
+cat("\nCounts of occurrences for each disease based on your symptoms:\n")
+if (length(disease_counts) > 0) {
+    # Sort counts and get top 5 diseases
+    sorted_counts <- sort(disease_counts, decreasing = TRUE)
+    top_diseases <- head(sorted_counts, 5)
+    
+    for (disease in names(top_diseases)) {
+        cat(paste(disease, ":", top_diseases[disease], "\n"))
+    }
+} else {
+    cat("No occurrences found for the given symptoms.\n")
+}
+
+# Evaluate model accuracy using test data
+y_pred_test <- predict(model, test_df[, -ncol(test_df)], type = "class") # Exclude prognosis column from test data
+accuracy <- sum(y_pred_test == test_df$prognosis) / nrow(test_df)
+
+cat(paste("\nModel Accuracy:", round(accuracy, 4), "\n"))
+```
+
+```{r}
+# Load necessary library
+library(randomForest)
+library(dplyr)
+
+# Check and preprocess the training dataset
+# Ensure all character columns are converted to factors
+train_df[] <- lapply(train_df, function(x) if(is.character(x)) as.factor(x) else x)
+
+# Handle NA values by removing rows with NA or imputing them
+train_df <- na.omit(train_df)
+
+# Ensure the response variable is a factor
+train_df$prognosis <- as.factor(train_df$prognosis)
+
+# Define symptom names based on the training dataset (excluding prognosis column)
+symptom_names <- colnames(train_df)[-ncol(train_df)]
+
+# Function to get user input for symptoms
+get_user_symptoms <- function(symptom_names) {
+    symptoms <- rep(0, length(symptom_names)) # Initialize a vector of zeros
+    cat("Enter symptoms (separate multiple symptoms with commas):\n")
+    input <- readline(prompt = "Symptoms: ")
+    
+    # Split input into individual symptom names
+    user_inputs <- unlist(strsplit(input, ","))
+    user_inputs <- trimws(user_inputs) # Remove whitespace
+    
+    for (symptom in user_inputs) {
+        if (symptom %in% symptom_names) {
+            index <- which(symptom_names == symptom)
+            symptoms[index] <- 1 # Set to 1 if symptom is present
+        } else {
+            cat(paste("Warning: '", symptom, "' is not a valid symptom name.\n", sep = ""))
+        }
+    }
+    
+    return(as.numeric(symptoms)) # Ensure numeric vector output
+}
+
+# Train the Random Forest model
+model_rf <- randomForest(prognosis ~ ., data = train_df,
+                         ntree = 200,        # Number of trees
+                         mtry = sqrt(ncol(train_df) - 1), # Square root of number of features
+                         nodesize = 5,      # Minimum size of terminal nodes
+                         maxnodes = 30) 
+
+# Get user input for symptoms
+user_symptoms <- get_user_symptoms(symptom_names)
+
+# Function to count occurrences of diseases based on user symptoms in training data
+count_occurrences <- function(user_symptoms) {
+    # Create a mask to filter rows where all user symptoms are 1
+    symptom_mask <- rowSums(train_df[, -ncol(train_df)] * user_symptoms) == sum(user_symptoms)
+    
+    # Filter rows and count occurrences of diseases
+    disease_counts <- table(as.character(train_df[symptom_mask, ncol(train_df)]))
+    
+    return(disease_counts)
+}
+
+# Count occurrences of predicted diseases based on user symptoms
+disease_counts <- count_occurrences(user_symptoms)
+
+cat("\nCounts of occurrences for each disease based on your symptoms:\n")
+if (length(disease_counts) > 0) {
+    # Sort counts and get top 5 diseases
+    sorted_counts <- sort(disease_counts, decreasing = TRUE)
+    top_diseases <- head(sorted_counts, 5)
+    
+    for (disease in names(top_diseases)) {
+        cat(paste(disease, ":", top_diseases[disease], "\n"))
+    }
+} else {
+    cat("No occurrences found for the given symptoms.\n")
+}
+
+# Evaluate model accuracy using test data (ensure test_df is preprocessed similarly)
+y_pred_test <- predict(model_rf, test_df[, -ncol(test_df)]) # Exclude prognosis column from test data
+accuracy <- sum(as.character(y_pred_test) == as.character(test_df$prognosis)) / nrow(test_df)
+
+cat(paste("\nModel Accuracy (Random Forest):", round(accuracy, 4), "\n"))
+```
+
+```{r}
+questions = mongo(collection="Questions_disease",db="ArogyaDB",url=cs)
+```
+
+```{r}
+q_df = questions$find()
+```
+
+```{r}
+# Load necessary libraries
+library(randomForest)
+library(dplyr)
+library(mongolite)
+
+# Assuming train_df and test_df are already loaded in your environment
+
+# Ensure the training dataset is properly formatted
+train_df[] <- lapply(train_df, function(x) if(is.character(x)) as.factor(x) else x)
+train_df <- na.omit(train_df)
+
+# Ensure the response variable is a factor
+train_df$prognosis <- as.factor(train_df$prognosis)
+
+# Remove any empty columns
+train_df <- train_df[, colSums(is.na(train_df)) < nrow(train_df)]
+
+# Check if there are valid predictor columns
+if (ncol(train_df) < 2) {
+    stop("Not enough columns in train_df to proceed with model training.")
+}
+
+# Define symptom names based on the training dataset (excluding prognosis column)
+symptom_names <- colnames(train_df)[-ncol(train_df)]
+
+# Train the Random Forest model
+model_rf <- randomForest(prognosis ~ ., data = train_df,
+                         ntree = 200,        # Number of trees
+                         mtry = sqrt(ncol(train_df) - 1), # Square root of number of features
+                         nodesize = 5,      # Minimum size of terminal nodes
+                         maxnodes = 30)
+
+cat("Random Forest model trained successfully.\n")
+
+# Function to get user input for symptoms
+get_user_symptoms <- function(symptom_names) {
+    symptoms <- rep(0, length(symptom_names)) # Initialize a vector of zeros
+    cat("Enter symptoms (separate multiple symptoms with commas):\n")
+    input <- readline(prompt = "Symptoms: ")
+    
+    # Split input into individual symptom names
+    user_inputs <- unlist(strsplit(input, ","))
+    user_inputs <- trimws(user_inputs) # Remove whitespace
+    
+    for (symptom in user_inputs) {
+        if (symptom %in% symptom_names) {
+            index <- which(symptom_names == symptom)
+            symptoms[index] <- 1 # Set to 1 if symptom is present
+        } else {
+            cat(paste("Warning: '", symptom, "' is not a valid symptom name.\n", sep = ""))
+        }
+    }
+    
+    return(as.numeric(symptoms)) # Ensure numeric vector output
+}
+
+# Get user input for symptoms
+user_symptoms <- get_user_symptoms(symptom_names)
+
+# Function to count occurrences of diseases based on user symptoms in training data
+count_occurrences <- function(user_symptoms) {
+    # Create a mask to filter rows where all user symptoms are 1
+    symptom_mask <- rowSums(train_df[, -ncol(train_df)] * user_symptoms) == sum(user_symptoms)
+    
+    # Filter rows and count occurrences of diseases
+    disease_counts <- table(as.character(train_df[symptom_mask, ncol(train_df)]))
+    
+    return(disease_counts)
+}
+
+# Count occurrences of predicted diseases based on user symptoms
+disease_counts <- count_occurrences(user_symptoms)
+
+cat("\nCounts of occurrences for each disease based on your symptoms:\n")
+if (length(disease_counts) > 0) {
+    # Sort counts and get top 5 diseases
+    sorted_counts <- sort(disease_counts, decreasing = TRUE)
+    top_diseases <- head(sorted_counts, 5)
+    
+    for (disease in names(top_diseases)) {
+        cat(paste(disease, ":", top_diseases[disease], "\n"))
+    }
+
+    # Fetch questions for the predicted diseases from MongoDB
+    questions_collection <- mongo(collection="Questions_disease", db="ArogyaDB", url="mongodb://localhost:27017/")
+    all_questions <- list()
+    
+    for (disease in names(top_diseases)) {
+        question_record <- questions_collection$find(paste0('{"disease": "', disease, '"}'))
+        if (nrow(question_record) > 0) {
+            questions_list <- unlist(question_record$questions)
+            all_questions[[disease]] <- questions_list
+        }
+    }
+
+    if (length(all_questions) > 0) {
+        responses <- list()  # Store responses for each disease
+        
+        cat("\nAnswer the following questions (yes/no):\n")
+        for (disease in names(all_questions)) {
+            questions <- all_questions[[disease]]
+            for (question in questions) {
+                response <- readline(paste(question, "(yes/no): "))
+                normalized_response <- tolower(trimws(response))
+                responses[[disease]] <- c(responses[[disease]], normalized_response)
+            }
+        }
+
+        # Determine the best matching disease based on responses
+        best_disease <- NULL
+        
+        for (disease in names(responses)) {
+            if (sum(responses[[disease]] == "yes") > length(responses[[disease]]) / 2) {  # More than half yes responses
+                best_disease <- disease
+                break
+            }
+        }
+
+        if (!is.null(best_disease)) {
+            cat(paste("\nBest Matching Disease:", best_disease, "\n"))
+        } else {
+            cat("No best match found based on your responses.\n")
+        }
+        
+    } else {
+        cat("No questions available for the predicted diseases.\n")
+    }
+} else {
+    cat("No occurrences found for the given symptoms.\n")
+}
+
+# Evaluate model accuracy using test data (ensure test_df is preprocessed similarly)
+y_pred_test <- predict(model_rf, test_df[, -ncol(test_df)]) # Exclude prognosis column from test data
+accuracy <- sum(as.character(y_pred_test) == as.character(test_df$prognosis)) / nrow(test_df)
+
+cat(paste("\nModel Accuracy (Random Forest):", round(accuracy, 4), "\n"))
+```
+
